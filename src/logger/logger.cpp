@@ -36,25 +36,24 @@ namespace mist::logger
         const bool use_cerr = (tag == level_tag::ERROR || tag == level_tag::WARNING);
         std::ostream &out = use_cerr ? std::cerr : std::cout;
 
+        // Layout: [TAG] is bold+underlined, the padding spaces and message are not.
+        // The reset ansi() call must come before the padding spaces, not after
+        // the closing bracket, otherwise the spaces are still inside the
+        // underline sequence.
         std::string styled_msg;
-
-        // Pattern: tag prefix gets BOLD+UNDERLINE, then a full SGR reset
-        // (style_tag::NONE emits "0;" which clears all attributes) before
-        // reapplying just the colour for the message body. Without the
-        // explicit reset, UNDERLINE bleeds into the message text.
         switch (tag)
         {
         case level_tag::ERROR:
-            styled_msg = ansi(colour_tag::RED, {style_tag::BOLD, style_tag::UNDERLINE}) + "[ERROR]   " + ansi(colour_tag::RED, {style_tag::NONE}) + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::RED, {style_tag::BOLD, style_tag::UNDERLINE}) + "[ERROR]" + ansi(colour_tag::RED, {style_tag::NONE}) + "   " + std::string(msg) + ansi();
             break;
         case level_tag::WARNING:
-            styled_msg = ansi(colour_tag::YELLOW, {style_tag::BOLD, style_tag::UNDERLINE}) + "[WARNING] " + ansi(colour_tag::YELLOW, {style_tag::NONE}) + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::YELLOW, {style_tag::BOLD, style_tag::UNDERLINE}) + "[WARNING]" + ansi(colour_tag::YELLOW, {style_tag::NONE}) + " " + std::string(msg) + ansi();
             break;
         case level_tag::INFO:
-            styled_msg = ansi(colour_tag::BRIGHT_BLUE, {style_tag::BOLD, style_tag::UNDERLINE}) + "[INFO]    " + ansi(colour_tag::BRIGHT_BLUE, {style_tag::NONE}) + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::BRIGHT_BLUE, {style_tag::BOLD, style_tag::UNDERLINE}) + "[INFO]" + ansi(colour_tag::BRIGHT_BLUE, {style_tag::NONE}) + "    " + std::string(msg) + ansi();
             break;
         case level_tag::DEBUG:
-            styled_msg = ansi(colour_tag::CYAN, {style_tag::BOLD, style_tag::UNDERLINE}) + "[DEBUG]   " + ansi(colour_tag::CYAN, {style_tag::NONE}) + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::CYAN, {style_tag::BOLD, style_tag::UNDERLINE}) + "[DEBUG]" + ansi(colour_tag::CYAN, {style_tag::NONE}) + "   " + std::string(msg) + ansi();
             break;
         case level_tag::PLAIN:
         default:
