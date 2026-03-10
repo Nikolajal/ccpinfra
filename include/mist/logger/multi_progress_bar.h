@@ -136,7 +136,7 @@ namespace mist::logger
         int last_line_count_ = 0;
         int tag_col_width_ = -1;
         mutable int suffix_width_ = -1;
-        time_point last_render_
+        time_point last_render_;
     };
 
 } // namespace mist::logger

@@ -189,7 +189,6 @@ namespace mist::logger
         }
 
         // --- Build output ---
-        const bool first_render = (last_line_count_ == 0);
         std::string out;
         out.reserve(512);
 
