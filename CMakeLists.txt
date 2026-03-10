@@ -11,12 +11,12 @@ project(mist
 # ------------------------------------------------------------------
 
 add_library(mist STATIC
-    src/logger/logger.cpp
-    src/logger/logger_types.cpp
-    src/logger/progress_bar.cpp
-    src/logger/multi_progress_bar.cpp 
+    src/logger/logger.cxx
+    src/logger/logger_types.cxx
+    src/logger/progress_bar.cxx
+    src/logger/multi_progress_bar.cxx 
     src/logger/progress_bar_registry.cxx
-    src/ring_finding/hough_transform.cpp
+    src/ring_finding/hough_transform.cxx
 )
 
 target_include_directories(mist

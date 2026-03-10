@@ -185,6 +185,11 @@ namespace mist::logger
             break;
         }
 
+        // --- Save state for render_unlocked() ---
+        last_fraction_ = fraction;
+        last_current_ = current;
+        last_total_ = total;
+
         // --- Print ---
         std::cout << "\033[2K\r"
                   << ansi(colour_tag::BRIGHT_GREEN, {style_tag::BOLD, style_tag::UNDERLINE})
@@ -204,4 +209,14 @@ namespace mist::logger
             std::cout << std::flush;
     }
 
+    void progress_bar::render_unlocked(bool flush)
+    {
+        // Called by the registry while its own mutex is held.
+        // We must NOT acquire mutex_ here (deadlock risk — see header docs).
+        // Re-invoking render() is safe: render() only touches our own fields
+        // and stdout; it does not acquire any external lock.
+        if (suffix_width_ < 0 || !active_)
+            return;
+        render(last_fraction_, last_current_, last_total_, flush);
+    }
 } // namespace mist::logger

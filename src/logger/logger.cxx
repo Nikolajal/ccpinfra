@@ -5,8 +5,8 @@ namespace mist::logger
 {
     namespace
     {
-        level_tag g_min_level    = level_tag::DEBUG;
-        bool      g_in_update_mode = false;
+        level_tag g_min_level = level_tag::DEBUG;
+        bool g_in_update_mode = false;
     }
 
     namespace detail
@@ -18,7 +18,7 @@ namespace mist::logger
     }
 
     void set_min_level(level_tag level) { g_min_level = level; }
-    level_tag get_min_level()           { return g_min_level; }
+    level_tag get_min_level() { return g_min_level; }
 
     void log(level_tag tag, std::string_view msg, bool flush)
     {
@@ -26,22 +26,22 @@ namespace mist::logger
             return;
 
         const bool use_cerr = (tag == level_tag::ERROR || tag == level_tag::WARNING);
-        std::ostream& out = use_cerr ? std::cerr : std::cout;
+        std::ostream &out = use_cerr ? std::cerr : std::cout;
 
         std::string styled_msg;
         switch (tag)
         {
         case level_tag::ERROR:
-            styled_msg = ansi(colour_tag::RED,          {style_tag::BOLD, style_tag::UNDERLINE}) + "[ERROR]"   + ansi(colour_tag::RED,          {style_tag::NONE}) + "   " + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::RED, {style_tag::BOLD, style_tag::UNDERLINE}) + "[ERROR]" + ansi(colour_tag::RED, {style_tag::NONE}) + "   " + std::string(msg) + ansi();
             break;
         case level_tag::WARNING:
-            styled_msg = ansi(colour_tag::YELLOW,       {style_tag::BOLD, style_tag::UNDERLINE}) + "[WARNING]" + ansi(colour_tag::YELLOW,       {style_tag::NONE}) + " "   + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::YELLOW, {style_tag::BOLD, style_tag::UNDERLINE}) + "[WARNING]" + ansi(colour_tag::YELLOW, {style_tag::NONE}) + " " + std::string(msg) + ansi();
             break;
         case level_tag::INFO:
-            styled_msg = ansi(colour_tag::BRIGHT_BLUE,  {style_tag::BOLD, style_tag::UNDERLINE}) + "[INFO]"    + ansi(colour_tag::BRIGHT_BLUE,  {style_tag::NONE}) + "    " + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::BRIGHT_BLUE, {style_tag::BOLD, style_tag::UNDERLINE}) + "[INFO]" + ansi(colour_tag::BRIGHT_BLUE, {style_tag::NONE}) + "    " + std::string(msg) + ansi();
             break;
         case level_tag::DEBUG:
-            styled_msg = ansi(colour_tag::CYAN,         {style_tag::BOLD, style_tag::UNDERLINE}) + "[DEBUG]"   + ansi(colour_tag::CYAN,         {style_tag::NONE}) + "   " + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::CYAN, {style_tag::BOLD, style_tag::UNDERLINE}) + "[DEBUG]" + ansi(colour_tag::CYAN, {style_tag::NONE}) + "   " + std::string(msg) + ansi();
             break;
         case level_tag::PLAIN:
         default:

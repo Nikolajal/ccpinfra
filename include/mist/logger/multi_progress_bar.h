@@ -255,7 +255,7 @@ namespace mist::logger
         // Render bookkeeping
         int last_line_count_ = 0;
         int tag_col_width_   = -1;  ///< max tag length + padding; -1 = uninit
-        int suffix_width_    = -1;  ///< elapsed/eta suffix width;  -1 = uninit
+        mutable int suffix_width_    = -1;  ///< elapsed/eta suffix width;  -1 = uninit
     };
 
 } // namespace mist::logger

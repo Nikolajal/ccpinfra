@@ -5,8 +5,8 @@
 #include <string>
 
 #if defined(MIST_HAS_IOCTL)
-#  include <sys/ioctl.h>
-#  include <unistd.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 #endif
 
 namespace mist::logger::detail
@@ -44,7 +44,8 @@ namespace mist::logger::detail
          */
         void erase_lines(int n)
         {
-            if (n <= 0) return;
+            if (n <= 0)
+                return;
             std::string seq;
             seq.reserve(n * 12);
             // Erase current line first, then walk up erasing each one.
@@ -55,11 +56,10 @@ namespace mist::logger::detail
         }
     } // anonymous namespace
 
-
     // =========================================================================
     // bar_registry — singleton
     // =========================================================================
-    progress_bar_registry& progress_bar_registry::instance()
+    progress_bar_registry &progress_bar_registry::instance()
     {
         // Meyers singleton — constructed once, destroyed at program exit.
         // Thread-safe in C++11 and later (magic statics).
@@ -70,21 +70,21 @@ namespace mist::logger::detail
     // -------------------------------------------------------------------------
     // Registration
     // -------------------------------------------------------------------------
-    void progress_bar_registry::register_bar(progress_bar* bar)
+    void progress_bar_registry::register_bar(progress_bar *bar)
     {
         std::lock_guard<std::mutex> lk(mutex_);
-        current_.type       = active_bar_handle::kind::single;
+        current_.type = active_bar_handle::kind::single;
         current_.ptr.single = bar;
     }
 
-    void progress_bar_registry::register_bar(multi_progress_bar* bar)
+    void progress_bar_registry::register_bar(multi_progress_bar *bar)
     {
         std::lock_guard<std::mutex> lk(mutex_);
-        current_.type      = active_bar_handle::kind::multi;
+        current_.type = active_bar_handle::kind::multi;
         current_.ptr.multi = bar;
     }
 
-    void progress_bar_registry::unregister_bar(progress_bar* bar)
+    void progress_bar_registry::unregister_bar(progress_bar *bar)
     {
         std::lock_guard<std::mutex> lk(mutex_);
         if (current_.type == active_bar_handle::kind::single &&
@@ -92,7 +92,7 @@ namespace mist::logger::detail
             current_ = {};
     }
 
-    void progress_bar_registry::unregister_bar(multi_progress_bar* bar)
+    void progress_bar_registry::unregister_bar(multi_progress_bar *bar)
     {
         std::lock_guard<std::mutex> lk(mutex_);
         if (current_.type == active_bar_handle::kind::multi &&
@@ -106,7 +106,8 @@ namespace mist::logger::detail
     void progress_bar_registry::erase_active_bar_locked()
     {
         // mutex_ is already held by the caller — do NOT re-lock.
-        if (!current_.has_bar()) return;
+        if (!current_.has_bar())
+            return;
 
         int lines = 0;
         if (current_.type == active_bar_handle::kind::single)
@@ -120,7 +121,8 @@ namespace mist::logger::detail
     void progress_bar_registry::redraw_active_bar_locked()
     {
         // mutex_ is already held by the caller — do NOT re-lock.
-        if (!current_.has_bar()) return;
+        if (!current_.has_bar())
+            return;
 
         if (current_.type == active_bar_handle::kind::single)
             current_.ptr.single->render_unlocked(false);
@@ -131,7 +133,7 @@ namespace mist::logger::detail
     // -------------------------------------------------------------------------
     // Mutex exposure
     // -------------------------------------------------------------------------
-    void progress_bar_registry::lock()   { mutex_.lock(); }
+    void progress_bar_registry::lock() { mutex_.lock(); }
     void progress_bar_registry::unlock() { mutex_.unlock(); }
 
     bool progress_bar_registry::has_active_bar() const

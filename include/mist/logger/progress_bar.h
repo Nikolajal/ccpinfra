@@ -130,17 +130,20 @@ namespace mist::logger
         void render_unlocked(bool flush);
 
     private:
-        using clock_t    = std::chrono::steady_clock;
+        using clock_t = std::chrono::steady_clock;
         using time_point = std::chrono::time_point<clock_t>;
 
-        mutable std::mutex mutex_;  // mutable: locked in const methods
+        mutable std::mutex mutex_; // mutable: locked in const methods
 
-        bar_style  style_;
-        bool       active_       = false;
-        int        suffix_width_ = -1;  ///< Fixed on first render; -1 = uninitialised.
+        bar_style style_;
+        bool active_ = false;
+        int suffix_width_ = -1; ///< Fixed on first render; -1 = uninitialised.
+        float last_fraction_ = 0.0f;
+        std::optional<int64_t> last_current_;
+        std::optional<int64_t> last_total_;
         time_point start_;
 
-        [[nodiscard]] static int         terminal_width();
+        [[nodiscard]] static int terminal_width();
         [[nodiscard]] static std::string format_duration(double seconds);
 
         /**
