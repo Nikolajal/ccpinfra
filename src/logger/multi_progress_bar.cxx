@@ -23,9 +23,9 @@ namespace mist::logger
         {
             constexpr std::array<std::pair<int64_t, const char *>, 4> tiers = {{
                 {1'000'000'000LL, "G"},
-                {1'000'000LL,     "M"},
-                {1'000LL,         "K"},
-                {1LL,             ""},
+                {1'000'000LL, "M"},
+                {1'000LL, "K"},
+                {1LL, ""},
             }};
             for (auto [thresh, suf] : tiers)
             {
@@ -206,7 +206,7 @@ namespace mist::logger
         }
 
         std::cout << out;
-        if (flush)
+        if (flush || first_render)
             std::cout << std::flush;
 
         last_line_count_ = 1 + (active_count > 0 ? 1 + active_count : 0);
@@ -389,8 +389,10 @@ namespace mist::logger
         const int s = static_cast<int>(seconds) % 60;
 
         std::ostringstream o;
-        if (h > 0) o << h << "h ";
-        if (h > 0 || m > 0) o << m << "m ";
+        if (h > 0)
+            o << h << "h ";
+        if (h > 0 || m > 0)
+            o << m << "m ";
         o << s << "s";
         return o.str();
     }
@@ -418,8 +420,10 @@ namespace mist::logger
     {
         std::lock_guard<std::mutex> lk(parent_.mutex_);
         fraction_ = fraction;
-        if (current) current_ = *current;
-        if (total)   total_   = *total;
+        if (current)
+            current_ = *current;
+        if (total)
+            total_ = *total;
         parent_._subtask_updated_locked(this, flush);
     }
 
