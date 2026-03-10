@@ -1,5 +1,7 @@
 #pragma once
 #include <mist/logger/logger_types.h>
+#include <mist/logger/progress_bar.h>
+#include <mist/logger/multi_progress_bar.h>
 #include <mist/logger/progress_bar_registry.h>
 #include <iostream>
 #include <string>
@@ -28,7 +30,7 @@ namespace mist::logger
     // Level filter
     // ------------------------------------------------------------------
 
-    void      set_min_level(level_tag level);
+    void set_min_level(level_tag level);
     level_tag get_min_level();
 
     // ------------------------------------------------------------------
@@ -52,16 +54,16 @@ namespace mist::logger
     // Convenience wrappers — thin inline delegates to log()
     // ------------------------------------------------------------------
 
-    inline void error  (const std::string& msg, bool flush = true) { log(level_tag::ERROR,   msg, flush); }
-    inline void warning(const std::string& msg, bool flush = true) { log(level_tag::WARNING, msg, flush); }
-    inline void info   (const std::string& msg, bool flush = true) { log(level_tag::INFO,    msg, flush); }
-    inline void debug  (const std::string& msg, bool flush = true) { log(level_tag::DEBUG,   msg, flush); }
+    inline void error(const std::string &msg, bool flush = true) { log(level_tag::ERROR, msg, flush); }
+    inline void warning(const std::string &msg, bool flush = true) { log(level_tag::WARNING, msg, flush); }
+    inline void info(const std::string &msg, bool flush = true) { log(level_tag::INFO, msg, flush); }
+    inline void debug(const std::string &msg, bool flush = true) { log(level_tag::DEBUG, msg, flush); }
 
     // ------------------------------------------------------------------
     // In-place update line (for simple single-line progress, not bars)
     // ------------------------------------------------------------------
 
-    void update    (std::string_view msg, bool flush = true);
+    void update(std::string_view msg, bool flush = true);
     void end_update(bool flush = true);
 
 } // namespace mist::logger
