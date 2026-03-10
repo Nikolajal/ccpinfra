@@ -130,17 +130,11 @@ namespace mist::logger
     void multi_progress_bar::_subtask_finished_locked(
         subtask_progress_bar *who, bool flush)
     {
+        if (!who->active_) // already finished, ignore
+            return;
         who->active_ = false;
         ++finished_count_;
 
-        if (total_subtasks_ > 0)
-        {
-            const float auto_frac =
-                static_cast<float>(finished_count_) /
-                static_cast<float>(total_subtasks_);
-            if (auto_frac > main_fraction_)
-                main_fraction_ = auto_frac;
-        }
         _render_all_locked(flush, /*skip_erase=*/false);
     }
 
@@ -424,12 +418,20 @@ namespace mist::logger
         parent_._subtask_finished_locked(this, flush);
     }
 
+    // Fix 2: reactivate on update
     void subtask_progress_bar::_update_impl(float fraction,
                                             std::optional<int64_t> current,
                                             std::optional<int64_t> total,
                                             bool flush)
     {
         std::lock_guard<std::mutex> lk(parent_.mutex_);
+        // Reactivate if previously finished (e.g. spill reset)
+        if (!active_)
+        {
+            active_ = true;
+            if (parent_.finished_count_ > 0)
+                --parent_.finished_count_;
+        }
         fraction_ = fraction;
         if (current)
             current_ = *current;
