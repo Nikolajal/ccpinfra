@@ -19,15 +19,13 @@ namespace mist::logger
     // =========================================================================
     namespace
     {
-        // Reuse the same SI formatter as progress_bar.cpp — kept local to
-        // avoid a header dependency on a private symbol.
         std::string si(int64_t n)
         {
             constexpr std::array<std::pair<int64_t, const char *>, 4> tiers = {{
                 {1'000'000'000LL, "G"},
-                {1'000'000LL, "M"},
-                {1'000LL, "K"},
-                {1LL, ""},
+                {1'000'000LL,     "M"},
+                {1'000LL,         "K"},
+                {1LL,             ""},
             }};
             for (auto [thresh, suf] : tiers)
             {
@@ -54,8 +52,6 @@ namespace mist::logger
 
     multi_progress_bar::~multi_progress_bar()
     {
-        // Best-effort cleanup: if the user forgot to call finish(), unregister
-        // without printing a newline to avoid corrupting the terminal.
         if (active_)
             detail::progress_bar_registry::instance().unregister_bar(this);
     }
@@ -71,7 +67,6 @@ namespace mist::logger
             std::unique_ptr<subtask_progress_bar>(
                 new subtask_progress_bar(std::move(tag), *this)));
         ++total_subtasks_;
-        // Invalidate layout cache — new longest tag may widen the tag column.
         tag_col_width_ = -1;
         return *subtasks_.back();
     }
@@ -92,11 +87,9 @@ namespace mist::logger
         if (!active_ && last_line_count_ == 0)
             return;
 
-        // Fill main bar to 100 % and erase all active subtask rows.
         main_fraction_ = 1.0f;
-        _render_all_locked(false); // final frame
+        _render_all_locked(false, /*skip_erase=*/false);
 
-        // Print one newline to move past the bar region.
         std::cout << '\n';
         if (flush)
             std::cout << std::flush;
@@ -112,8 +105,9 @@ namespace mist::logger
 
     void multi_progress_bar::render_unlocked(bool flush)
     {
-        // No mutex_ acquisition here — see lock acquisition order in the header.
-        _render_all_locked(flush); // writes directly; safe under registry lock
+        // Registry has already erased the bar region before calling here,
+        // so we must NOT erase again — pass skip_erase=true.
+        _render_all_locked(flush, /*skip_erase=*/true);
     }
 
     // =========================================================================
@@ -124,25 +118,21 @@ namespace mist::logger
     {
         std::lock_guard<std::mutex> lk(mutex_);
         main_fraction_ = frac;
-        _render_all_locked(flush);
+        _render_all_locked(flush, /*skip_erase=*/false);
     }
 
-    // Called by subtask_progress_bar (friend) — already under our mutex_.
     void multi_progress_bar::_subtask_updated_locked(
         const subtask_progress_bar * /*who*/, bool flush)
     {
-        _render_all_locked(flush);
+        _render_all_locked(flush, /*skip_erase=*/false);
     }
 
-    // Called by subtask_progress_bar::finish() (friend) — already under mutex_.
     void multi_progress_bar::_subtask_finished_locked(
         subtask_progress_bar *who, bool flush)
     {
         who->active_ = false;
         ++finished_count_;
 
-        // Auto-drive the main bar by finished/total unless the user has
-        // overridden it to something higher already.
         if (total_subtasks_ > 0)
         {
             const float auto_frac =
@@ -151,23 +141,13 @@ namespace mist::logger
             if (auto_frac > main_fraction_)
                 main_fraction_ = auto_frac;
         }
-        _render_all_locked(flush);
+        _render_all_locked(flush, /*skip_erase=*/false);
     }
 
     // -------------------------------------------------------------------------
-    // _render_all_locked  — core renderer, must be called with mutex_ held.
-    //
-    // Rendering model:
-    //   Line 0         : main "[PROGRESS]" bar
-    //   Line 1         : separator  "  ─── subtasks ───"   (only if K > 0)
-    //   Lines 2 … 1+K  : one line per active subtask
-    //
-    // On every call we:
-    //   1. Move cursor up last_line_count_ lines (erase what we drew before).
-    //   2. Redraw all current lines.
-    //   3. Store new last_line_count_.
+    // _render_all_locked
     // -------------------------------------------------------------------------
-    void multi_progress_bar::_render_all_locked(bool flush)
+    void multi_progress_bar::_render_all_locked(bool flush, bool skip_erase)
     {
         // --- Register on first render ---
         if (!active_)
@@ -183,7 +163,7 @@ namespace mist::logger
             if (s->active_)
                 ++active_count;
 
-        // --- Pre-compute stable tag column width (max tag + 1 space) ---
+        // --- Pre-compute stable tag column width ---
         if (tag_col_width_ < 0)
         {
             int max_tag = 0;
@@ -192,8 +172,8 @@ namespace mist::logger
             tag_col_width_ = max_tag + 1;
         }
 
-        // --- Erase previous render ---
-        if (last_line_count_ > 0)
+        // --- Erase previous render (skip when called from render_unlocked) ---
+        if (last_line_count_ > 0 && !skip_erase)
         {
             std::string up;
             up.reserve(last_line_count_ * 12);
@@ -204,7 +184,7 @@ namespace mist::logger
         }
 
         // --- Build output ---
-        const bool first_render = (last_line_count_ == 0); // ← ADD THIS
+        const bool first_render = (last_line_count_ == 0);
         std::string out;
         out.reserve(512);
 
@@ -213,8 +193,6 @@ namespace mist::logger
         if (active_count > 0)
         {
             const int tw = _terminal_width();
-
-            // ↓ CHANGE: '\n' → first_render ? "\n" : "\033[1B\r"
             out += first_render ? "\n" : "\033[1B\r";
             _emit_line(out, "\033[2m  ─── subtasks ───\033[0m", tw);
 
@@ -222,7 +200,6 @@ namespace mist::logger
             {
                 if (!s->active_)
                     continue;
-                // ↓ CHANGE: '\n' → first_render ? "\n" : "\033[1B\r"
                 out += first_render ? "\n" : "\033[1B\r";
                 _render_subtask(out, *s);
             }
@@ -236,14 +213,13 @@ namespace mist::logger
     }
 
     // -------------------------------------------------------------------------
-    // _render_main — appends the main "[PROGRESS]" bar line to `out`.
+    // _render_main
     // -------------------------------------------------------------------------
     void multi_progress_bar::_render_main(std::string &out) const
     {
         const double elapsed =
             std::chrono::duration<double>(clock_t::now() - start_).count();
 
-        // --- Suffix ---
         std::ostringstream suf;
         suf << " " << std::fixed << std::setprecision(1)
             << (main_fraction_ * 100.0f) << "%";
@@ -263,7 +239,6 @@ namespace mist::logger
 
         const std::string suf_str = suf.str();
 
-        // --- Fix suffix width once ---
         if (suffix_width_ < 0)
         {
             std::ostringstream worst;
@@ -274,20 +249,17 @@ namespace mist::logger
             suffix_width_ = static_cast<int>(worst.str().size());
         }
 
-        // --- Bar geometry ---
-        constexpr int prefix_w = 11; // "[PROGRESS] "
-        constexpr int brackets = 3;  // '[', ']', ' '
+        constexpr int prefix_w = 11;
+        constexpr int brackets = 3;
         const int tw = _terminal_width();
         const int bar_w = std::max(10, tw - prefix_w - brackets - suffix_width_);
         const int filled = static_cast<int>(std::round(main_fraction_ * bar_w));
         const int empty = bar_w - filled;
 
-        // Pad suffix
         std::string padded = suf_str;
         if (static_cast<int>(padded.size()) < suffix_width_)
             padded += std::string(suffix_width_ - padded.size(), ' ');
 
-        // Fill/empty strings
         std::string fill_s, tip_s, empty_s;
         if (style_ == bar_style::BLOCK)
         {
@@ -322,21 +294,17 @@ namespace mist::logger
     }
 
     // -------------------------------------------------------------------------
-    // _render_subtask — appends one subtask row to `out`.
-    //
-    // Format:  "  <tag padded>  [████░░░░]  42.3%  123/456"
+    // _render_subtask
     // -------------------------------------------------------------------------
     void multi_progress_bar::_render_subtask(std::string &out,
                                              const subtask_progress_bar &s) const
     {
         const int tw = _terminal_width();
 
-        // Tag column (padded to tag_col_width_)
         std::string tag_col = "  " + s.tag_;
         if (static_cast<int>(s.tag_.size()) < tag_col_width_)
             tag_col += std::string(tag_col_width_ - s.tag_.size(), ' ');
 
-        // Suffix
         std::ostringstream suf;
         suf << " " << std::fixed << std::setprecision(1)
             << (s.fraction_ * 100.0f) << "%";
@@ -344,7 +312,6 @@ namespace mist::logger
             suf << "  " << si(s.current_) << "/" << si(s.total_);
 
         const std::string suf_str = suf.str();
-        // Worst-case suffix for stable width: " 100.0%  1.00G/1.00G"
         constexpr int worst_suf_w = 21;
 
         const int prefix_w = static_cast<int>(tag_col.size());
@@ -375,42 +342,32 @@ namespace mist::logger
             empty_s = std::string(empty, ' ');
         }
 
-        out += ansi(colour_tag::WHITE, {style_tag::DIM});
+        out += ansi(colour_tag::CYAN, {style_tag::NONE});
         out += tag_col;
-        out += ansi(colour_tag::BRIGHT_CYAN, {style_tag::NONE});
         out += "[";
-        out += ansi(colour_tag::BRIGHT_CYAN, {style_tag::BOLD});
-        out += fill_s + tip_s;
+        out += ansi(colour_tag::CYAN, {style_tag::BOLD});
+        out += fill_s;
+        out += tip_s;
         out += ansi(colour_tag::WHITE, {style_tag::DIM});
         out += empty_s;
-        out += ansi(colour_tag::BRIGHT_CYAN, {style_tag::NONE});
+        out += ansi(colour_tag::CYAN, {style_tag::NONE});
         out += "]";
         out += ansi();
         out += padded;
-
-        _emit_line(out, "", tw); // pad/truncate to terminal width
     }
 
     // -------------------------------------------------------------------------
-    // _emit_line — pads or truncates `line` to exactly `term_width` chars,
-    // then appends to `out`. Used to prevent ghost characters on narrow redraws.
+    // _emit_line
     // -------------------------------------------------------------------------
     void multi_progress_bar::_emit_line(std::string &out,
                                         const std::string &line,
-                                        int term_width)
+                                        int /*term_width*/)
     {
-        // We only pad plain-ASCII content here; ANSI sequences contain non-
-        // printing bytes so we don't try to measure their display width.
-        // Padding the separator line to term_width is safe; for bar lines the
-        // suffix already pads itself to a fixed width so this is a no-op.
-        const int len = static_cast<int>(line.size());
         out += line;
-        if (len < term_width)
-            out += std::string(term_width - len, ' ');
     }
 
     // -------------------------------------------------------------------------
-    // Static helpers
+    // _terminal_width
     // -------------------------------------------------------------------------
     int multi_progress_bar::_terminal_width()
     {
@@ -422,30 +379,36 @@ namespace mist::logger
         return 80;
     }
 
+    // -------------------------------------------------------------------------
+    // _format_duration
+    // -------------------------------------------------------------------------
     std::string multi_progress_bar::_format_duration(double seconds)
     {
         const int h = static_cast<int>(seconds) / 3600;
         const int m = (static_cast<int>(seconds) % 3600) / 60;
         const int s = static_cast<int>(seconds) % 60;
+
         std::ostringstream o;
-        if (h > 0)
-            o << h << "h ";
-        if (h > 0 || m > 0)
-            o << m << "m ";
+        if (h > 0) o << h << "h ";
+        if (h > 0 || m > 0) o << m << "m ";
         o << s << "s";
         return o.str();
     }
 
     // =========================================================================
-    // subtask_progress_bar — method implementations
+    // subtask_progress_bar — public methods
     // =========================================================================
 
     void subtask_progress_bar::update(double fraction, bool flush)
     {
-        if (!active_)
-            return;
-        const float f = static_cast<float>(std::clamp(fraction, 0.0, 1.0));
-        _update_impl(f, std::nullopt, std::nullopt, flush);
+        _update_impl(static_cast<float>(std::clamp(fraction, 0.0, 1.0)),
+                     std::nullopt, std::nullopt, flush);
+    }
+
+    void subtask_progress_bar::finish(bool flush)
+    {
+        std::lock_guard<std::mutex> lk(parent_.mutex_);
+        parent_._subtask_finished_locked(this, flush);
     }
 
     void subtask_progress_bar::_update_impl(float fraction,
@@ -453,24 +416,11 @@ namespace mist::logger
                                             std::optional<int64_t> total,
                                             bool flush)
     {
-        if (!active_)
-            return;
         std::lock_guard<std::mutex> lk(parent_.mutex_);
         fraction_ = fraction;
-        if (current)
-            current_ = *current;
-        if (total)
-            total_ = *total;
+        if (current) current_ = *current;
+        if (total)   total_   = *total;
         parent_._subtask_updated_locked(this, flush);
-    }
-
-    void subtask_progress_bar::finish(bool flush)
-    {
-        if (!active_)
-            return;
-        std::lock_guard<std::mutex> lk(parent_.mutex_);
-        parent_._subtask_finished_locked(this, flush);
-        // active_ is set to false inside _subtask_finished_locked
     }
 
 } // namespace mist::logger
