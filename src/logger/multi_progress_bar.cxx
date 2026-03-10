@@ -149,6 +149,17 @@ namespace mist::logger
     // -------------------------------------------------------------------------
     void multi_progress_bar::_render_all_locked(bool flush, bool skip_erase)
     {
+        // --- Throttle: don't redraw more than ~10 times/sec ---
+        const bool first_render = (last_line_count_ == 0);
+        if (!first_render && !flush)
+        {
+            auto now = clock_t::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_render_).count();
+            if (ms < 100)
+                return;
+        }
+        last_render_ = clock_t::now();
+
         // --- Register on first render ---
         if (!active_)
         {
