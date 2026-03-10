@@ -45,3 +45,6 @@
 
 # build directory
 build/
+
+# Claude
+.claude
