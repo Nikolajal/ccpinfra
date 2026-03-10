@@ -1,164 +1,330 @@
-#include <mist/logger/progress_bar_registry.h>
-#include <mist/logger/progress_bar.h>
 #include <mist/logger/multi_progress_bar.h>
+#include <mist/logger/logger.h>
 #include <iostream>
-#include <string>
+#include <sstream>
+#include <iomanip>
+#include <cmath>
+#include <algorithm>
 
-#if defined(MIST_HAS_IOCTL)
+#if defined(__has_include) && __has_include(<sys/ioctl.h>)
 #include <sys/ioctl.h>
 #include <unistd.h>
+#define MIST_MPB_HAS_IOCTL 1
 #endif
 
-namespace mist::logger::detail
+namespace mist::logger
 {
     // =========================================================================
-    // Internal helpers
+    // Internal helpers (file-local)
     // =========================================================================
     namespace
     {
-        /** @brief Query terminal width — same helper as in progress_bar. */
-        int terminal_width()
+        std::string si(int64_t n)
         {
-#if defined(MIST_HAS_IOCTL)
-            struct winsize w;
-            if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
-                return static_cast<int>(w.ws_col);
-#endif
-            return 80;
-        }
-
-        /**
-         * @brief Erase N lines upward from the current cursor position.
-         *
-         * The ANSI sequence used here:
-         *  - `\r`         : move cursor to start of current line
-         *  - `\033[2K`    : erase entire current line (EL — Erase in Line)
-         *  - `\033[1A`    : move cursor up one line
-         *
-         * We repeat the up+erase for each line above the first, then erase
-         * the top line and leave the cursor there ready for new output.
-         *
-         * This is equivalent to what Cargo and Ninja do for their progress
-         * displays — it leaves no visual artifacts even if the previous render
-         * was narrower than the terminal.
-         */
-        void erase_lines(int n)
-        {
-            if (n <= 0)
-                return;
-            std::string seq;
-            seq.reserve(n * 12);
-            // Erase current line first, then walk up erasing each one.
-            seq += "\r\033[2K";
-            for (int i = 1; i < n; ++i)
-                seq += "\033[1A\r\033[2K";
-            std::cout << seq << std::flush;
+            constexpr std::array<std::pair<int64_t, const char *>, 4> tiers = {{
+                {1'000'000'000LL, "G"},
+                {1'000'000LL, "M"},
+                {1'000LL, "K"},
+                {1LL, ""},
+            }};
+            for (auto [thresh, suf] : tiers)
+            {
+                if (n >= thresh)
+                {
+                    std::ostringstream o;
+                    o << std::fixed << std::setprecision(2)
+                      << (static_cast<double>(n) / thresh) << suf;
+                    return o.str();
+                }
+            }
+            return std::to_string(n);
         }
     } // anonymous namespace
 
     // =========================================================================
-    // bar_registry — singleton
+    // multi_progress_bar — ctor / dtor
     // =========================================================================
-    progress_bar_registry &progress_bar_registry::instance()
+
+    multi_progress_bar::multi_progress_bar(bar_style style)
+        : style_(style), start_(clock_t::now())
     {
-        // Meyers singleton — constructed once, destroyed at program exit.
-        // Thread-safe in C++11 and later (magic statics).
-        static progress_bar_registry inst;
-        return inst;
     }
 
-    // -------------------------------------------------------------------------
-    // Registration
-    // -------------------------------------------------------------------------
-    void progress_bar_registry::register_bar(progress_bar *bar)
+    multi_progress_bar::~multi_progress_bar()
+    {
+        if (active_)
+            detail::progress_bar_registry::instance().unregister_bar(this);
+    }
+
+    // =========================================================================
+    // subtask management
+    // =========================================================================
+
+    subtask_progress_bar &multi_progress_bar::add_subtask(std::string tag)
     {
         std::lock_guard<std::mutex> lk(mutex_);
-        current_.type = active_bar_handle::kind::single;
-        current_.ptr.single = bar;
+        subtasks_.push_back(
+            std::unique_ptr<subtask_progress_bar>(
+                new subtask_progress_bar(std::move(tag), *this)));
+        ++total_subtasks_;
+        tag_col_width_ = -1;
+        return *subtasks_.back();
     }
 
-    void progress_bar_registry::register_bar(multi_progress_bar *bar)
+    // =========================================================================
+    // Public update / finish
+    // =========================================================================
+
+    void multi_progress_bar::update(double fraction, bool flush)
+    {
+        _set_main_fraction(static_cast<float>(std::clamp(fraction, 0.0, 1.0)),
+                           flush);
+    }
+
+    void multi_progress_bar::finish(bool flush)
     {
         std::lock_guard<std::mutex> lk(mutex_);
-        current_.type = active_bar_handle::kind::multi;
-        current_.ptr.multi = bar;
-    }
-
-    void progress_bar_registry::unregister_bar(progress_bar *bar)
-    {
-        std::lock_guard<std::mutex> lk(mutex_);
-        if (current_.type == active_bar_handle::kind::single &&
-            current_.ptr.single == bar)
-            current_ = {};
-    }
-
-    void progress_bar_registry::unregister_bar(multi_progress_bar *bar)
-    {
-        std::lock_guard<std::mutex> lk(mutex_);
-        if (current_.type == active_bar_handle::kind::multi &&
-            current_.ptr.multi == bar)
-            current_ = {};
-    }
-
-    // -------------------------------------------------------------------------
-    // Erase / redraw  (must be called with mutex_ already held)
-    // -------------------------------------------------------------------------
-    void progress_bar_registry::erase_active_bar_locked()
-    {
-        // mutex_ is already held by the caller — do NOT re-lock.
-        if (!current_.has_bar())
+        if (!active_ && last_line_count_ == 0)
             return;
 
-        int lines = 0;
-        if (current_.type == active_bar_handle::kind::single)
-            lines = current_.ptr.single->rendered_line_count();
-        else
-            lines = current_.ptr.multi->rendered_line_count();
+        main_fraction_ = 1.0f;
+        _render_all_locked(false, /*skip_erase=*/false);
 
-        erase_lines(lines);
-    }
+        std::cout << '\n';
+        if (flush)
+            std::cout << std::flush;
 
-    void progress_bar_registry::redraw_active_bar_locked()
-    {
-        // mutex_ is already held by the caller — do NOT re-lock.
-        if (!current_.has_bar())
-            return;
-
-        if (current_.type == active_bar_handle::kind::single)
-            current_.ptr.single->render_unlocked(false);
-        else
-            current_.ptr.multi->render_unlocked(false);
-    }
-
-    // -------------------------------------------------------------------------
-    // Mutex exposure
-    // -------------------------------------------------------------------------
-    void progress_bar_registry::lock() { mutex_.lock(); }
-    void progress_bar_registry::unlock() { mutex_.unlock(); }
-
-    bool progress_bar_registry::has_active_bar() const
-    {
-        // Intentionally not locking — snapshot read for quick checks.
-        // The caller must not rely on this value remaining stable.
-        return current_.has_bar();
+        active_ = false;
+        last_line_count_ = 0;
+        detail::progress_bar_registry::instance().unregister_bar(this);
     }
 
     // =========================================================================
-    // log_print_guard
+    // Registry callbacks (called with registry mutex held, NOT our mutex_)
     // =========================================================================
-    log_print_guard::log_print_guard()
+
+    void multi_progress_bar::render_unlocked(bool flush)
     {
-        // Lock the registry for the entire erase → print → redraw window.
-        // This prevents any bar render from another thread from interleaving
-        // between our erase and the caller's std::cout write.
-        progress_bar_registry::instance().lock();
-        progress_bar_registry::instance().erase_active_bar_locked();
+        // Registry has already erased the bar region before calling here,
+        // so we must NOT erase again — pass skip_erase=true.
+        _render_all_locked(flush, /*skip_erase=*/true);
     }
 
-    log_print_guard::~log_print_guard()
+    // =========================================================================
+    // Private helpers
+    // =========================================================================
+
+    void multi_progress_bar::_set_main_fraction(float frac, bool flush)
     {
-        progress_bar_registry::instance().redraw_active_bar_locked();
-        progress_bar_registry::instance().unlock();
+        std::lock_guard<std::mutex> lk(mutex_);
+        main_fraction_ = frac;
+        _render_all_locked(flush, /*skip_erase=*/false);
     }
 
-} // namespace mist::logger::detail
+    void multi_progress_bar::_subtask_updated_locked(
+        const subtask_progress_bar * /*who*/, bool flush)
+    {
+        _render_all_locked(flush, /*skip_erase=*/false);
+    }
+
+    void multi_progress_bar::_subtask_finished_locked(
+        subtask_progress_bar *who, bool flush)
+    {
+        who->active_ = false;
+        ++finished_count_;
+
+        if (total_subtasks_ > 0)
+        {
+            const float auto_frac =
+                static_cast<float>(finished_count_) /
+                static_cast<float>(total_subtasks_);
+            if (auto_frac > main_fraction_)
+                main_fraction_ = auto_frac;
+        }
+        _render_all_locked(flush, /*skip_erase=*/false);
+    }
+
+    // -------------------------------------------------------------------------
+    // _render_all_locked
+    // -------------------------------------------------------------------------
+    void multi_progress_bar::_render_all_locked(bool flush, bool skip_erase)
+    {
+        // --- Register on first render ---
+        if (!active_)
+        {
+            active_ = true;
+            start_ = clock_t::now();
+            detail::progress_bar_registry::instance().register_bar(this);
+        }
+
+        // --- Count active subtasks ---
+        int active_count = 0;
+        for (auto &s : subtasks_)
+            if (s->active_)
+                ++active_count;
+
+        // --- Pre-compute stable tag column width ---
+        if (tag_col_width_ < 0)
+        {
+            int max_tag = 0;
+            for (auto &s : subtasks_)
+                max_tag = std::max(max_tag, static_cast<int>(s->tag_.size()));
+            tag_col_width_ = max_tag + 1;
+        }
+
+        // --- Erase previous render (skip when called from render_unlocked) ---
+        if (last_line_count_ > 0 && !skip_erase)
+        {
+            std::string up;
+            up.reserve(last_line_count_ * 12);
+            up += "\r\033[2K";
+            for (int i = 1; i < last_line_count_; ++i)
+                up += "\033[1A\r\033[2K";
+            std::cout << up;
+        }
+
+        // --- Build output ---
+        const bool first_render = (last_line_count_ == 0);
+        std::string out;
+        out.reserve(512);
+
+        _render_main(out);
+
+        if (active_count > 0)
+        {
+            const int tw = _terminal_width();
+            out += first_render ? "\n" : "\033[1B\r";
+            _emit_line(out, "\033[2m  ─── subtasks ───\033[0m", tw);
+
+            for (auto &s : subtasks_)
+            {
+                if (!s->active_)
+                    continue;
+                out += first_render ? "\n" : "\033[1B\r";
+                _render_subtask(out, *s);
+            }
+        }
+
+        std::cout << out;
+        if (flush)
+            std::cout << std::flush;
+
+        last_line_count_ = 1 + (active_count > 0 ? 1 + active_count : 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // _render_main
+    // -------------------------------------------------------------------------
+    void multi_progress_bar::_render_main(std::string &out) const
+    {
+        const double elapsed =
+            std::chrono::duration<double>(clock_t::now() - start_).count();
+
+        std::ostringstream suf;
+        suf << " " << std::fixed << std::setprecision(1)
+            << (main_fraction_ * 100.0f) << "%";
+
+        if (total_subtasks_ > 0)
+            suf << "  " << finished_count_ << "/" << total_subtasks_ << " tasks";
+
+        suf << "  elapsed: " << _format_duration(elapsed);
+
+        if (main_fraction_ > 0.001f && main_fraction_ < 1.0f)
+        {
+            const double eta = (elapsed / main_fraction_) * (1.0 - main_fraction_);
+            suf << "  eta: " << _format_duration(eta);
+        }
+        else if (main_fraction_ >= 1.0f)
+            suf << "  eta: done";
+
+        const std::string suf_str = suf.str();
+
+        if (suffix_width_ < 0)
+        {
+            std::ostringstream worst;
+            worst << " 100.0%";
+            if (total_subtasks_ > 0)
+                worst << "  " << total_subtasks_ << "/" << total_subtasks_ << " tasks";
+            worst << "  elapsed: 99h 59m 59s  eta: 99h 59m 59s";
+            suffix_width_ = static_cast<int>(worst.str().size());
+        }
+
+        constexpr int prefix_w = 11;
+        constexpr int brackets = 3;
+        const int tw = _terminal_width();
+        const int bar_w = std::max(10, tw - prefix_w - brackets - suffix_width_);
+        const int filled = static_cast<int>(std::round(main_fraction_ * bar_w));
+        const int empty = bar_w - filled;
+
+        std::string padded = suf_str;
+        if (static_cast<int>(padded.size()) < suffix_width_)
+            padded += std::string(suffix_width_ - padded.size(), ' ');
+
+        std::string fill_s, tip_s, empty_s;
+        if (style_ == bar_style::BLOCK)
+        {
+            for (int i = 0; i < filled; ++i)
+                fill_s += "\xe2\x96\x88";
+            for (int i = 0; i < empty; ++i)
+                empty_s += "\xe2\x96\x91";
+        }
+        else
+        {
+            if (filled > 0)
+            {
+                fill_s = std::string(filled - 1, '=');
+                tip_s = (main_fraction_ < 1.0f) ? ">" : "=";
+            }
+            empty_s = std::string(empty, ' ');
+        }
+
+        out += ansi(colour_tag::BRIGHT_GREEN, {style_tag::BOLD, style_tag::UNDERLINE});
+        out += "[PROGRESS]";
+        out += ansi(colour_tag::BRIGHT_GREEN, {style_tag::NONE});
+        out += " [";
+        out += ansi(colour_tag::BRIGHT_GREEN, {style_tag::BOLD});
+        out += fill_s;
+        out += tip_s;
+        out += ansi(colour_tag::WHITE, {style_tag::DIM});
+        out += empty_s;
+        out += ansi(colour_tag::BRIGHT_GREEN, {style_tag::NONE});
+        out += "]";
+        out += ansi();
+        out += padded;
+    }
+
+    // -------------------------------------------------------------------------
+    // _render_subtask
+    // -------------------------------------------------------------------------
+    void multi_progress_bar::_render_subtask(std::string &out,
+                                             const subtask_progress_bar &s) const
+    {
+        const int tw = _terminal_width();
+
+        std::string tag_col = "  " + s.tag_;
+        if (static_cast<int>(s.tag_.size()) < tag_col_width_)
+            tag_col += std::string(tag_col_width_ - s.tag_.size(), ' ');
+
+        std::ostringstream suf;
+        suf << " " << std::fixed << std::setprecision(1)
+            << (s.fraction_ * 100.0f) << "%";
+        if (s.total_ > 0)
+            suf << "  " << si(s.current_) << "/" << si(s.total_);
+
+        const std::string suf_str = suf.str();
+        constexpr int worst_suf_w = 21;
+
+        const int prefix_w = static_cast<int>(tag_col.size());
+        constexpr int brackets = 3;
+        const int bar_w = std::max(6, tw - prefix_w - brackets - worst_suf_w);
+        const int filled = static_cast<int>(std::round(s.fraction_ * bar_w));
+        const int empty = bar_w - filled;
+
+        std::string padded = suf_str;
+        if (static_cast<int>(padded.size()) < worst_suf_w)
+            padded += std::string(worst_suf_w - padded.size(), ' ');
+
+        std::string fill_s, tip_s, empty_s;
+        if (style_ == bar_style::BLOCK)
+        {
+            for (int i = 0; i < filled; ++i)
