@@ -42,3 +42,6 @@
 
 # custom
 *.DS_Store
+
+# build directory
+build/
