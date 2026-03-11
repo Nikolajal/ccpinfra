@@ -31,4 +31,5 @@
 #include <mist/logger/progress_bar.h>
 #include <mist/logger/multi_progress_bar.h>
 
+//  --- Algorithm utility
 #include <mist/ring_finding/hough_transform.h>

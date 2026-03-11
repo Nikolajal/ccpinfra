@@ -45,13 +45,30 @@ namespace mist::logger
         // sets active_, so erase_all() won't move up for unrendered bars.
     }
 
+    progress_bar::progress_bar(std::string tag, bar_style style)
+        : tag_(std::move(tag)), style_(style)
+    {
+    }
+
+    void progress_bar::assign_tag(std::string tag)
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        tag_ = std::move(tag);
+    }
+
+    void progress_bar::clear_tag()
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        tag_.clear();
+    }
+
     progress_bar::~progress_bar()
     {
         // Safety net: if finish() was never called, commit whatever state we
         // have so the bar line isn't left dangling on screen.
         if (active_)
         {
-            active_       = false;
+            active_ = false;
             suffix_width_ = -1;
             _draw();
         }
@@ -96,15 +113,18 @@ namespace mist::logger
         // Delegate all cursor management to anchor_object.
         anchor_object::erase_all();
         anchor_object::redraw_all();
-        if (flush) std::cout << std::flush;
+        if (flush)
+            std::cout << std::flush;
     }
 
     void progress_bar::finish(bool flush)
     {
+        _update_state(1.0f, 1, 1);
         {
             std::lock_guard<std::mutex> lk(mutex_);
-            if (!active_) return;
-            active_       = false;
+            if (!active_)
+                return;
+            active_ = false;
             suffix_width_ = -1;
         }
         // rendered_line_count() now returns 0, so erase_all() skips this bar.
@@ -113,7 +133,8 @@ namespace mist::logger
         anchor_object::erase_all();
         anchor_object::redraw_all();
         _draw();
-        if (flush) std::cout << std::flush;
+        if (flush)
+            std::cout << std::flush;
     }
 
     // -------------------------------------------------------------------------
@@ -137,21 +158,23 @@ namespace mist::logger
         const int s = static_cast<int>(seconds) % 60;
 
         std::ostringstream oss;
-        if (h > 0) oss << h << "h ";
-        if (h > 0 || m > 0) oss << m << "m ";
+        if (h > 0)
+            oss << h << "h ";
+        if (h > 0 || m > 0)
+            oss << m << "m ";
         oss << s << "s";
         return oss.str();
     }
 
     void progress_bar::_update_state(float fraction,
-                                      std::optional<int64_t> current,
-                                      std::optional<int64_t> total)
+                                     std::optional<int64_t> current,
+                                     std::optional<int64_t> total)
     {
         // Must be called with mutex_ held.
         if (!active_)
         {
-            start_        = clock_t::now();
-            active_       = true;
+            start_ = clock_t::now();
+            active_ = true;
             suffix_width_ = -1;
         }
 
@@ -172,10 +195,10 @@ namespace mist::logger
         else if (fraction >= 1.0f)
             suffix << "  eta: done";
 
-        last_suffix_   = suffix.str();
+        last_suffix_ = suffix.str();
         last_fraction_ = fraction;
-        last_current_  = current;
-        last_total_    = total;
+        last_current_ = current;
+        last_total_ = total;
 
         if (suffix_width_ < 0)
         {
@@ -198,33 +221,45 @@ namespace mist::logger
         if (static_cast<int>(padded.size()) < suffix_width_)
             padded += std::string(suffix_width_ - padded.size(), ' ');
 
-        constexpr int prefix_w = 11;
-        constexpr int brackets = 3;
-        const int     term_w   = terminal_width();
-        const int     bar_w    = std::max(10, term_w - prefix_w - brackets - suffix_width_);
-        const int     filled   = static_cast<int>(std::round(last_fraction_ * bar_w));
-        const int     empty    = bar_w - filled;
+        // Build the prefix string and its display width.
+        // If a tag is set: "[tag] " — dynamic width.
+        // Otherwise fall back to the default "[PROGRESS] " — width 11.
+        const bool has_tag = !tag_.empty();
+        const int prefix_w = has_tag ? static_cast<int>(tag_.size()) + 3 // "[" + tag + "] "
+                                     : 11;                               // "[PROGRESS] "
+        constexpr int brackets = 3;                                      // " [" ... "]"  around the fill bar
+        const int term_w = terminal_width();
+        const int bar_w = std::max(10, term_w - prefix_w - brackets - suffix_width_);
+        const int filled = static_cast<int>(std::round(last_fraction_ * bar_w));
+        const int empty = bar_w - filled;
 
         std::string filled_str, tip_str, empty_str;
         if (style_ == bar_style::BLOCK)
         {
-            for (int i = 0; i < filled; ++i) filled_str += "\xe2\x96\x88";
-            for (int i = 0; i < empty;  ++i) empty_str  += "\xe2\x96\x91";
+            for (int i = 0; i < filled; ++i)
+                filled_str += "\xe2\x96\x88";
+            for (int i = 0; i < empty; ++i)
+                empty_str += "\xe2\x96\x91";
         }
         else
         {
             if (filled > 0)
             {
                 filled_str = std::string(filled - 1, '=');
-                tip_str    = (last_fraction_ < 1.0f) ? ">" : "=";
+                tip_str = (last_fraction_ < 1.0f) ? ">" : "=";
             }
             empty_str = std::string(empty, ' ');
         }
 
         std::cout << "\033[2K\r"
-                  << ansi(colour_tag::BRIGHT_GREEN, {style_tag::BOLD, style_tag::UNDERLINE})
-                  << "[PROGRESS]"
-                  << ansi(colour_tag::BRIGHT_GREEN, {style_tag::NONE})
+                  << ansi(colour_tag::BRIGHT_GREEN, {style_tag::BOLD, style_tag::UNDERLINE});
+
+        if (has_tag)
+            std::cout << "[" << tag_ << "]";
+        else
+            std::cout << "[PROGRESS]";
+
+        std::cout << ansi(colour_tag::BRIGHT_GREEN, {style_tag::NONE})
                   << " ["
                   << ansi(colour_tag::BRIGHT_GREEN, {style_tag::BOLD})
                   << filled_str << tip_str

@@ -31,7 +31,31 @@ namespace mist::logger
     {
     public:
         explicit progress_bar(bar_style style = bar_style::BLOCK);
+
+        /**
+         * @brief Construct a named progress bar.
+         *
+         * The tag is rendered as a bracketed prefix before the bar:
+         * @code
+         *   [framer]  [████████░░░░] 60.0%  elapsed: 2s  eta: 3s
+         * @endcode
+         * If the tag is empty the bar renders exactly as the untagged constructor.
+         *
+         * @param tag    Short label shown in brackets before the bar.
+         * @param style  Visual fill style (BLOCK or ARROW).
+         */
+        explicit progress_bar(std::string tag, bar_style style = bar_style::BLOCK);
+
         ~progress_bar() override;
+
+        /**
+         * @brief Set or replace the tag at any time (before the first update).
+         * @param tag  New label; pass an empty string to remove the tag.
+         */
+        void assign_tag(std::string tag);
+
+        /** @brief Remove the tag — bar reverts to the default [PROGRESS] prefix. */
+        void clear_tag();
 
         template <typename T, typename = std::enable_if_t<std::is_integral_v<T>>>
         void update(T current, T total, bool flush = true)
@@ -47,7 +71,8 @@ namespace mist::logger
             }
             anchor_object::erase_all();
             anchor_object::redraw_all();
-            if (flush) std::cout << std::flush;
+            if (flush)
+                std::cout << std::flush;
         }
 
         void update(double fraction, bool flush = true);
@@ -60,21 +85,22 @@ namespace mist::logger
         void render_line() const override;
 
     private:
-        using clock_t    = std::chrono::steady_clock;
+        using clock_t = std::chrono::steady_clock;
         using time_point = std::chrono::time_point<clock_t>;
 
         mutable std::mutex mutex_;
 
+        std::string tag_; ///< Optional label shown as [tag] before the bar.
         bar_style style_;
-        bool      active_       = false;
-        int       suffix_width_ = -1;
-        float     last_fraction_ = 0.0f;
-        std::string            last_suffix_;
+        bool active_ = false;
+        int suffix_width_ = -1;
+        float last_fraction_ = 0.0f;
+        std::string last_suffix_;
         std::optional<int64_t> last_current_;
         std::optional<int64_t> last_total_;
         time_point start_;
 
-        [[nodiscard]] static int         terminal_width();
+        [[nodiscard]] static int terminal_width();
         [[nodiscard]] static std::string format_duration(double seconds);
 
         // _update_state: update all internal fields (call with mutex_ held).
