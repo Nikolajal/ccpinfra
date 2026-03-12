@@ -373,7 +373,7 @@ void demo_visual()
             mist::logger::debug("debug message — multi-bar pinned below");
             a.update(i, 10, false);
             b.update(i, 20, false);
-            multi.update(i, 10, false);
+            multi.update(i, 15, false);
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         a.finish();

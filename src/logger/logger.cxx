@@ -11,7 +11,7 @@ namespace mist::logger
     // =========================================================================
     struct log_print_guard
     {
-        log_print_guard()  { anchor_object::erase_all(); }
+        log_print_guard() { anchor_object::erase_all(); }
         ~log_print_guard() { anchor_object::redraw_all(); }
 
         log_print_guard(const log_print_guard &) = delete;
@@ -35,7 +35,19 @@ namespace mist::logger
     anchor_object::~anchor_object()
     {
         auto &reg = _registry();
-        reg.erase(std::remove(reg.begin(), reg.end(), this), reg.end());
+        auto it = std::find(reg.begin(), reg.end(), this);
+        if (it == reg.end())
+            return;
+
+        // Erase all currently rendered lines
+        erase_all();
+
+        // Remove self from registry
+        reg.erase(it);
+
+        // Redraw whatever remains — order doesn't matter to the caller,
+        // the anchor handles it automatically
+        redraw_all();
     }
 
     int anchor_object::total_anchored_lines()
@@ -57,7 +69,7 @@ namespace mist::logger
         if (n <= 0)
             return;
         for (int i = 0; i < n; ++i)
-            std::cout << "\033[1A\r\033[2K";   // up one line, go to col 0, erase
+            std::cout << "\033[1A\r\033[2K"; // up one line, go to col 0, erase
     }
 
     void anchor_object::redraw_all()
@@ -152,16 +164,16 @@ namespace mist::logger
         switch (tag)
         {
         case level_tag::ERROR:
-            styled_msg = ansi(colour_tag::RED,         {style_tag::BOLD, style_tag::UNDERLINE}) + "[ERROR]"   + ansi(colour_tag::RED,         {style_tag::NONE}) + "   " + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::RED, {style_tag::BOLD, style_tag::UNDERLINE}) + "[ERROR]" + ansi(colour_tag::RED, {style_tag::NONE}) + "   " + std::string(msg) + ansi();
             break;
         case level_tag::WARNING:
-            styled_msg = ansi(colour_tag::YELLOW,      {style_tag::BOLD, style_tag::UNDERLINE}) + "[WARNING]" + ansi(colour_tag::YELLOW,      {style_tag::NONE}) + " "   + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::YELLOW, {style_tag::BOLD, style_tag::UNDERLINE}) + "[WARNING]" + ansi(colour_tag::YELLOW, {style_tag::NONE}) + " " + std::string(msg) + ansi();
             break;
         case level_tag::INFO:
-            styled_msg = ansi(colour_tag::BRIGHT_BLUE, {style_tag::BOLD, style_tag::UNDERLINE}) + "[INFO]"    + ansi(colour_tag::BRIGHT_BLUE, {style_tag::NONE}) + "    " + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::BRIGHT_BLUE, {style_tag::BOLD, style_tag::UNDERLINE}) + "[INFO]" + ansi(colour_tag::BRIGHT_BLUE, {style_tag::NONE}) + "    " + std::string(msg) + ansi();
             break;
         case level_tag::DEBUG:
-            styled_msg = ansi(colour_tag::CYAN,        {style_tag::BOLD, style_tag::UNDERLINE}) + "[DEBUG]"   + ansi(colour_tag::CYAN,        {style_tag::NONE}) + "   " + std::string(msg) + ansi();
+            styled_msg = ansi(colour_tag::CYAN, {style_tag::BOLD, style_tag::UNDERLINE}) + "[DEBUG]" + ansi(colour_tag::CYAN, {style_tag::NONE}) + "   " + std::string(msg) + ansi();
             break;
         case level_tag::PLAIN:
         default:
@@ -170,7 +182,7 @@ namespace mist::logger
         }
 
         {
-            log_print_guard guard;   // erase anchors, print, redraw
+            log_print_guard guard; // erase anchors, print, redraw
             out << styled_msg << '\n';
             if (flush)
                 out << std::flush;
@@ -190,7 +202,7 @@ namespace mist::logger
     void update(std::string update_name, std::string_view msg, bool flush)
     {
         auto &anchors = _update_anchors();
-        auto &ended   = _ended_names();
+        auto &ended = _ended_names();
 
         // Warn once if this name was previously end_update()'d, then recreate.
         if (ended.count(update_name))
@@ -225,7 +237,7 @@ namespace mist::logger
 
         // Erase all anchor lines, remove this anchor.
         anchor_object::erase_all();
-        anchors.erase(it);              // ~update_anchor deregisters it
+        anchors.erase(it); // ~update_anchor deregisters it
         _ended_names().insert(update_name);
 
         // Commit the final state of this update as a permanent scrolling line,
@@ -234,7 +246,7 @@ namespace mist::logger
                   << "[" << update_name << "]"
                   << ansi(colour_tag::BRIGHT_GREEN, {style_tag::NONE})
                   << " " << last_msg << ansi() << '\n';
-        anchor_object::redraw_all();    // redraws everything except the removed anchor
+        anchor_object::redraw_all(); // redraws everything except the removed anchor
 
         if (flush)
             std::cout << std::flush;
