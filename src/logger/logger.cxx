@@ -34,20 +34,20 @@ namespace mist::logger
 
     anchor_object::~anchor_object()
     {
+        static bool in_teardown = false;
+        if (in_teardown)
+            return;
+
         auto &reg = _registry();
         auto it = std::find(reg.begin(), reg.end(), this);
         if (it == reg.end())
             return;
 
-        // Erase all currently rendered lines
+        in_teardown = true;
         erase_all();
-
-        // Remove self from registry
         reg.erase(it);
-
-        // Redraw whatever remains — order doesn't matter to the caller,
-        // the anchor handles it automatically
         redraw_all();
+        in_teardown = false;
     }
 
     int anchor_object::total_anchored_lines()
